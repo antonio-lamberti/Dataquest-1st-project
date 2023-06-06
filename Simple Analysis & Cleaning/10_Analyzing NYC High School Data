@@ -1,0 +1,442 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# # Introduction
+# 
+# One of the most controversial issues in the U.S. educational system is the efficacy of standardized tests and whether they're unfair to certain groups. Hence, the aim of this project is to;
+# 
+# 
+# - Correlate between SAT scores and demographics. The study would seek to find correlation between SAT scores and factors like race, gender etc.
+# 
+# 
+# 
+# The SAT, or Scholastic Aptitude Test, is an exam that U.S. high school students take before applying to college. Colleges take the test scores into account when deciding who to admit, so it's important to perform well.
+# 
+# The test consists of three sections, each of which has 800 possible points. The combined score is out of 2,400 possible points (while this number has changed a few times, the dataset for this project is based on 2,400 total points). Organizations often rank high schools by their average SAT scores. The scores are also considered a measure of overall school district quality.
+# 
+# - The focus of this study is narrowed on high schools in New York City
+# 
+# New York City makes its data on high school SAT scores available online, as well as the demographics for each high school. Below are the links to all the datasets used in this project;
+# 
+# - [SAT scores by school](https://data.cityofnewyork.us/Education/SAT-Results/f9bf-2cp4) - SAT scores for each high school in New York City
+# 
+# - [School attendance](https://data.cityofnewyork.us/Education/School-Attendance-and-Enrollment-Statistics-by-Dis/7z8d-msnt) - Attendance information for each school in New York City
+# 
+# - [Class Size](https://data.cityofnewyork.us/Education/2010-2011-Class-Size-School-level-detail/urz7-pzb3) - Information on class size for each school
+# - [AP test results](https://data.cityofnewyork.us/Education/AP-College-Board-2010-School-Level-Results/itfs-ms3e) - Advanced Placement (AP) exam results for each high school (passing an optional AP exam in a particular subject can earn a student college credit in that subject)
+# - [Graduation outcomes](https://data.cityofnewyork.us/Education/Graduation-Outcomes-Classes-Of-2005-2010-School-Le/vh2h-md7a) - The percentage of students who graduated, and other outcome information
+# - [Demographics](https://data.cityofnewyork.us/Education/School-Demographics-and-Accountability-Snapshot-20/ihfw-zy9j) - Demographic information for each school
+# - [School survey](https://data.cityofnewyork.us/Education/NYC-School-Survey-2011/mnz3-dyi8) - Surveys of parents, teachers, and students at each school
+# 
+# 
+
+# # Read in the data
+
+# In[1]:
+
+
+import pandas as pd
+import numpy as np
+import re
+pd.set_option('display.max_columns', None)
+import matplotlib.pyplot as plt
+get_ipython().run_line_magic('matplotlib', 'inline')
+
+
+data_files = [
+    "ap_2010.csv",
+    "class_size.csv",
+    "demographics.csv",
+    "graduation.csv",
+    "hs_directory.csv",
+    "sat_results.csv"
+]
+
+data = {}
+
+for f in data_files:
+    d = pd.read_csv("schools/{0}".format(f))
+    data[f.replace(".csv", "")] = d
+
+
+# # Read in the surveys
+
+# In[2]:
+
+
+all_survey = pd.read_csv("schools/survey_all.txt", delimiter="\t", encoding='windows-1252')
+d75_survey = pd.read_csv("schools/survey_d75.txt", delimiter="\t", encoding='windows-1252')
+survey = pd.concat([all_survey, d75_survey], axis=0)
+
+survey["DBN"] = survey["dbn"]
+
+survey_fields = [
+    "DBN", 
+    "rr_s", 
+    "rr_t", 
+    "rr_p", 
+    "N_s", 
+    "N_t", 
+    "N_p", 
+    "saf_p_11", 
+    "com_p_11", 
+    "eng_p_11", 
+    "aca_p_11", 
+    "saf_t_11", 
+    "com_t_11", 
+    "eng_t_11", 
+    "aca_t_11", 
+    "saf_s_11", 
+    "com_s_11", 
+    "eng_s_11", 
+    "aca_s_11", 
+    "saf_tot_11", 
+    "com_tot_11", 
+    "eng_tot_11", 
+    "aca_tot_11",
+]
+survey = survey.loc[:,survey_fields]
+data["survey"] = survey
+
+
+# # Add DBN columns
+
+# In[3]:
+
+
+data["hs_directory"]["DBN"] = data["hs_directory"]["dbn"]
+
+def pad_csd(num):
+    string_representation = str(num)
+    if len(string_representation) > 1:
+        return string_representation
+    else:
+        return "0" + string_representation
+    
+data["class_size"]["padded_csd"] = data["class_size"]["CSD"].apply(pad_csd)
+data["class_size"]["DBN"] = data["class_size"]["padded_csd"] + data["class_size"]["SCHOOL CODE"]
+
+
+# # Convert columns to numeric
+
+# In[4]:
+
+
+cols = ['SAT Math Avg. Score', 'SAT Critical Reading Avg. Score', 'SAT Writing Avg. Score']
+for c in cols:
+    data["sat_results"][c] = pd.to_numeric(data["sat_results"][c], errors="coerce")
+
+data['sat_results']['sat_score'] = data['sat_results'][cols[0]] + data['sat_results'][cols[1]] + data['sat_results'][cols[2]]
+
+def find_lat(loc):
+    coords = re.findall("\(.+, .+\)", loc)
+    lat = coords[0].split(",")[0].replace("(", "")
+    return lat
+
+def find_lon(loc):
+    coords = re.findall("\(.+, .+\)", loc)
+    lon = coords[0].split(",")[1].replace(")", "").strip()
+    return lon
+
+data["hs_directory"]["lat"] = data["hs_directory"]["Location 1"].apply(find_lat)
+data["hs_directory"]["lon"] = data["hs_directory"]["Location 1"].apply(find_lon)
+
+data["hs_directory"]["lat"] = pd.to_numeric(data["hs_directory"]["lat"], errors="coerce")
+data["hs_directory"]["lon"] = pd.to_numeric(data["hs_directory"]["lon"], errors="coerce")
+
+
+# # Condense datasets
+
+# In[5]:
+
+
+class_size = data["class_size"]
+class_size = class_size[class_size["GRADE "] == "09-12"]
+class_size = class_size[class_size["PROGRAM TYPE"] == "GEN ED"]
+
+class_size = class_size.groupby("DBN").agg(np.mean)
+class_size.reset_index(inplace=True)
+data["class_size"] = class_size
+
+data["demographics"] = data["demographics"][data["demographics"]["schoolyear"] == 20112012]
+
+data["graduation"] = data["graduation"][data["graduation"]["Cohort"] == "2006"]
+data["graduation"] = data["graduation"][data["graduation"]["Demographic"] == "Total Cohort"]
+
+
+# # Convert AP scores to numeric
+
+# In[6]:
+
+
+cols = ['AP Test Takers ', 'Total Exams Taken', 'Number of Exams with scores 3 4 or 5']
+
+for col in cols:
+    data["ap_2010"][col] = pd.to_numeric(data["ap_2010"][col], errors="coerce")
+
+
+# # Combine the datasets
+
+# In[7]:
+
+
+combined = data["sat_results"]
+
+combined = combined.merge(data["ap_2010"], on="DBN", how="left")
+combined = combined.merge(data["graduation"], on="DBN", how="left")
+
+to_merge = ["class_size", "demographics", "survey", "hs_directory"]
+
+for m in to_merge:
+    combined = combined.merge(data[m], on="DBN", how="inner")
+
+combined = combined.fillna(combined.mean())
+combined = combined.fillna(0)
+
+
+# # Add a school district column for mapping
+
+# In[8]:
+
+
+def get_first_two_chars(dbn):
+    return dbn[0:2]
+
+combined["school_dist"] = combined["DBN"].apply(get_first_two_chars)
+
+
+# # Find correlations
+
+# In[9]:
+
+
+correlations = combined.corr()
+correlations = correlations["sat_score"]
+print(correlations)
+
+
+# # Plotting survey correlations
+
+# In[10]:
+
+
+# Remove DBN since it's a unique identifier, not a useful numerical value for correlation.
+survey_fields.remove("DBN")
+
+
+# In[11]:
+
+
+def sat_corr(df, cols_list):
+    return df.corr()['sat_score'][cols_list]
+
+
+# In[12]:
+
+
+survey_correlations = sat_corr(combined, survey_fields)
+survey_correlations
+
+
+# In[13]:
+
+
+def plot_bar_chart(correlations, main_title = None):
+    bar_plot = correlations.plot(kind = 'bar', 
+                      legend = False)
+
+    plt.title(main_title) 
+
+    return bar_plot
+
+
+# In[14]:
+
+
+survey_plot = plot_bar_chart(survey_correlations, main_title = 'Correlations between SAT Scores and Surveys')
+survey_plot;
+
+
+# # Investigate Safety Surveys
+
+# In[15]:
+
+
+def scatter_plot(df, col):
+    sct_plot = df.plot.scatter(x = col, y = 'sat_score')
+    plt.xlabel(None)
+    plt.ylabel('SAT Scores')
+
+    return sct_plot
+
+
+# In[16]:
+
+
+survey_sct_plot = scatter_plot(combined, 'saf_s_11')
+plt.xlabel('SAF S 11')
+survey_sct_plot;
+
+
+# ### Observation on Safety and SAT Scores
+# There are appears to be a weak positive correlation between survey by students on safety and SAT scores. Despite this, there are few schools with both high safety scores and SAT scores and vice versa. There is however a cluster of schools in the middle with outliers where the safety is perceived high but low SAT score
+
+# In[17]:
+
+
+borough = combined.groupby('boro').agg(np.mean)
+borough_average = borough['saf_s_11'].sort_values(ascending=False)
+borough_average
+
+
+# ### Safety Observations
+# Based on the survey of students on safety, Manhattan is perceived to be the safest while Brooklyn the least safe of the boroughs. 
+
+# # Investigate racial differences in SAT scores
+
+# In[18]:
+
+
+race_columns = ['white_per',
+               'asian_per',
+               'black_per',
+               'hispanic_per']
+
+
+# In[19]:
+
+
+race_correlations = sat_corr(combined, race_columns)
+race_correlations
+
+
+# In[20]:
+
+
+race_plot = plot_bar_chart(race_correlations, main_title = 'Correlations between SAT Scores and Students\' Race' )
+race_plot;
+
+
+# ### Race Observation
+# 
+# Schools with high percentage of Whites and Asians have positive correlations with SAT scores. While schools with high percentage of Blacks and Hispanics negatively correlate with SAT scores. 
+
+# In[21]:
+
+
+hisp_sct_plot = scatter_plot(combined, 'hispanic_per')
+plt.xlabel('Hispanic %')
+hisp_sct_plot;
+
+
+# ### Hispanic Students Correlations Observation
+# 
+# As stated above, schools with high population of hispanics correlate negatively with SAT Scores. Using the scatterplot to further investigate the correlation reveals a linear weak negative correlation. The less hispanics in the schools, the higher the average SAT scores and vice versa. The outliers in the scatterplot also, show some schools with few hispanic percentage scoring less in SAT
+
+# In[22]:
+
+
+combined[combined['hispanic_per'] > 95] [['SCHOOL NAME', 
+                                          'sat_score', 
+                                          'hispanic_per']]
+
+
+# ### Greater than 95% Hispanic Students Schools Observation
+# 
+# The majority of the schools in the list have more than 95% of their student population being hispanic as they are established to cater for new immigrants mostly from Spanish-speaking countries. The schools are used to help integrate these new immigrants into the society
+
+# In[23]:
+
+
+combined[(combined['hispanic_per'] < 10) & 
+         (combined['sat_score'] > 1800)][['SCHOOL NAME', 
+                                          'sat_score', 
+                                          'hispanic_per']]
+
+
+# ### Observation
+# 
+# The schools in the list above have high academic standards and screen prospective students through entrance exam. They are mostly specialized science and technology schools with rigorous STEM curriculum. Some of the schools receive extra funding from the NYC Department of Education. However, these does not explain the low number of hispanic students.
+
+# # Investigate gender differences in SAT scores.
+
+# In[24]:
+
+
+gender_columns = ['male_per', 'female_per']
+gender_correlations = sat_corr(combined, gender_columns)
+gender_correlations
+
+
+# In[25]:
+
+
+gender_plot = plot_bar_chart(gender_correlations, main_title = 'Correlations between SAT Scores and Students\' Gender %' )
+gender_plot;
+
+
+# ### Gender Correlations Observation
+# The bar plot posits schools with high female percentage correlates positively with SAT Scores whereas high male percentage correlates negatively with SAT Scores.
+
+# In[26]:
+
+
+fml_sct_plot = scatter_plot(combined, 'female_per')
+plt.xlabel('Female %')
+fml_sct_plot;
+
+
+# ### Observation 
+# 
+# Further investigation of the data using the scatterplot above reveal  the percentage of female students in a school with SAT Scores show a linear, weak, positive correlation. There are some few schools with a female percentage of more than 60% with average SAT scores exceeding 1700. These schools will be further investigated subsequently
+
+# In[27]:
+
+
+combined[(combined['female_per'] > 60) & 
+         (combined['sat_score'] > 1700)][['SCHOOL NAME', 
+                                          'sat_score', 
+                                          'female_per']]
+
+
+# ### Observation
+# 
+# The schools in this list are mostly liberal arts specialized school with equally high academic standards
+
+# # Investigate AP Test Takers
+
+# In[28]:
+
+
+combined['ap_per'] = (combined['AP Test Takers ']) / (combined['total_enrollment']) * 100
+
+
+# In[29]:
+
+
+ap_sct_plot = scatter_plot(combined, 'ap_per')
+plt.xlabel('AP Test Takers %')
+ap_sct_plot;
+
+
+# ### Observation
+# 
+# The percentage of AP Test Takers has a linear but weak positive correlation to SAT score with visible outliers. The outliers reveal that some schools with high AP participation scored low in SAT and vice versa 
+
+# # Investigate Class Size
+
+# # Conclusion
+# 
+# The project sought to investigate the correlation (or not) between SAT scores and demographics of high school in the 5 boroughs of New York City using data available on [NYC Open Data](https://opendata.cityofnewyork.us/).
+# 
+# Specifically, demographic factors of students in the high schcools investigated are gender, race and safety perceptions of the boroughs. Also, an additional attribute of other optional test, AP Test was investigated to determine how it correlates with SAT scores.
+# 
+# Subsequently, the results showed, Manhattan was perceived to be the safest borough amongst students while Brooklyn is the least safe.
+# 
+# Also, schools with high percentage of White and Asian students appear to generally have high SAT scores while the opposite is true for schools with high percentage of Black and Hispanic students. 
+# 
+# Moreover, the analysis revealed schools where there are large percentage of female students generally have slightly high SAT scores whereas the more the number of male students in a school the lower the schools average SAT score.
+# 
+# Additionally, the percentage of students who took the AP Test did not seem to strongly correlate with SAT scores depsite showing the higher the percentage of students in a high school who took the AP test, the higher the school's average SAT scores, but the increment is not proportional.
+# 
+# There are more columns in the dataset that should be investigated in the future that may reveal interesting findings.
